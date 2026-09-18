@@ -12,7 +12,8 @@
 <title>Comunidade 111 - Ronfe</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"></noscript>
 
 <style>
   :root{
@@ -723,6 +724,8 @@ body::after{
       class="brand-header-image"
       src="./assets/header.webp"
       alt="ORIENTA-TE · RONFE · COMUNIDADE 111 — Mais que um destino, um caminho"
+      fetchpriority="high"
+      decoding="async"
     >
   </header>
 
@@ -1002,6 +1005,10 @@ async function loadMonthFromSheet(year, month){
   if(!SHEET_API_URL) return;
   const token = ++monthLoadToken;
   const monthPrefix = year + '-' + pad2(month + 1);
+
+  // Primeiro pinta o que já existe localmente. A Sheet é sincronizada em background.
+  renderCalendarCellsFromCache();
+
   try{
     const days = await sheetMonth(year, month);
     // Nunca aplicar uma resposta atrasada de outro mês.
@@ -1205,8 +1212,14 @@ async function selectDay(key){
 }
 
 /* ---------- Day events (chips) ---------- */
-async function renderDayEvents(){
-  const day = await loadDay(selectedKey);
+async function renderDayEvents(localOnly = false){
+  let day;
+  if(localOnly){
+    day = cache[selectedKey] || localDayGet(selectedKey) || emptyDay();
+    cache[selectedKey] = day;
+  } else {
+    day = await loadDay(selectedKey);
+  }
   document.getElementById('selectedDateLabel').textContent = formatSelectedLabel(selectedKey);
   const chipRow = document.getElementById('chipRow');
   chipRow.innerHTML = '';
@@ -1234,7 +1247,7 @@ async function renderDayEvents(){
     chipRow.appendChild(chip);
   });
 
-  await renderEventForm();
+  await renderEventForm(localOnly);
 }
 
 function chipLabel(ev){
@@ -1297,11 +1310,13 @@ async function autofillFromGuias(equipaEvent, currentDay){
 }
 
 /* ---------- Event form rendering ---------- */
-async function renderEventForm(){
+async function renderEventForm(localOnly = false){
   const container = document.getElementById('eventForm');
   container.innerHTML = '';
   if(!activeEventId){ return; }
-  const day = await loadDay(selectedKey);
+  const day = localOnly
+    ? (cache[selectedKey] || localDayGet(selectedKey) || emptyDay())
+    : await loadDay(selectedKey);
   const ev = day.events.find(e => e.id === activeEventId);
   if(!ev) return;
 
@@ -1807,16 +1822,19 @@ async function init(){
   renderCalendar();
   document.getElementById('selectedDateLabel').textContent = formatSelectedLabel(selectedKey);
 
-  // Carrega o mês diretamente. Não fazemos uma lista global de todos os dias,
-  // evitando uma chamada extra e tornando o calendário mais rápido e estável.
-  if(SHEET_API_URL){
-    await loadMonthFromSheet(viewYear, viewMonth);
+  // PRIMEIRO: mostra imediatamente o que já existe no dispositivo.
+  // A abertura da aplicação nunca fica à espera da Google Sheet.
+  try {
+    await renderDayEvents(true);
+  } catch(e) {
+    console.warn('Não foi possível carregar a cache local:', e);
   }
 
-  try {
-    await renderDayEvents();
-  } catch(e) {
-    console.warn('Não foi possível carregar os eventos:', e);
+  // DEPOIS: sincroniza a Google Sheet em background.
+  if(SHEET_API_URL){
+    loadMonthFromSheet(viewYear, viewMonth).catch(e =>
+      console.warn('Sincronização da Sheet:', e)
+    );
   }
 }
 
